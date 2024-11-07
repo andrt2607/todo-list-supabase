@@ -1,6 +1,11 @@
 # Golang Gin API Boilerplate
+# Added Feature
+1. CRUD
+2. Export Excel
+3. Export PDF
+4. Sent Email
 
-Golang Gin API Boilerplate with Postgresql
+Golang Gin API Boilerplate with Supabase
 ## Getting Started
 
 ### 1. Configure Environment Variables
