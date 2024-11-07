@@ -17,4 +17,5 @@ func SetupActivityRoutes(router *gin.RouterGroup, validate *validator.Validate) 
 	router.DELETE("/:id", activityController.DeleteActivity)
 	router.GET("/export-excel", activityController.ExportExcelActivities)
 	router.GET("/export-pdf", activityController.ExportPDFActivities)
+	router.POST("/email-test", activityController.SendEmailActivities)
 }

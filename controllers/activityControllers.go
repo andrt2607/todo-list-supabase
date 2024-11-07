@@ -1,10 +1,14 @@
 package controllers
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
+	"html/template"
+	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"todo-list/db"
@@ -15,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/xuri/excelize/v2"
+	"gopkg.in/gomail.v2"
 )
 
 // func Login(c *gin.Context) {
@@ -315,31 +320,65 @@ func (ac *ActivityController) ExportExcelActivities(c *gin.Context) {
 	}
 }
 
+func addOne(i int) int {
+	return i + 1
+}
+
 func (ac *ActivityController) ExportPDFActivities(c *gin.Context) {
-	// exec.Command("mkdir", "-p", "pdf")
-	// exec.Command("rm", "-rf", "pdf/output_activity.pdf")
-	// command := exec.Command("wkhtmltopdf", "template_html/activity_template.html", "pdf/output_activity.pdf")
-	// err := command.Run()
-	// if err != nil {
-	// 	utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-	// 	return
-	// }
-	// const path = "C:/Program Files/wkhtmltopdf/bin"
-	// wkhtmltopdf.SetPath(path)
+
+	var activities []models.ActivityModel
+	rows, err := db.DB.Query("select * from activities")
+	if err != nil {
+		if err == sql.ErrNoRows {
+			utils.ThrowErr(c, http.StatusUnauthorized, "Username or Password is wrong")
+		} else {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	for rows.Next() {
+		var activity models.ActivityModel
+		err = rows.Scan(&activity.Id, &activity.Title, &activity.CreatedAt, &activity.Description, &activity.Status, &activity.Category)
+		if err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		activities = append(activities, activity)
+	}
+	dataTemp := struct {
+		Title       string
+		Description string
+		Activities  []models.ActivityModel
+	}{
+		Title:       "Activity Report",
+		Description: "This is the content of the activity report.",
+		Activities:  activities,
+	}
+	newTempl := template.New("activity_template.html").Funcs(template.FuncMap{
+		"addOne": addOne,
+	})
+	// Load template HTML
+	tmpl, err := newTempl.ParseFiles("template_html/activity_template.html", "template_html/_header_template.html", "template_html/_footer_template.html")
+	if err != nil {
+		utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Render template dengan data ke dalam buffer
+	var htmlBuffer bytes.Buffer
+	if err := tmpl.Execute(&htmlBuffer, dataTemp); err != nil {
+		utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+		return
+	}
 	pdfg, err := wkhtmltopdf.NewPDFGenerator()
 	if err != nil {
 		utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	templateHtml, err := os.Open("template_html/activity_template.html")
-	if templateHtml != nil {
-		defer templateHtml.Close()
-	}
 	if err != nil {
 		utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	pdfg.AddPage(wkhtmltopdf.NewPageReader(templateHtml))
+	pdfg.AddPage(wkhtmltopdf.NewPageReader(bytes.NewReader(htmlBuffer.Bytes())))
 	pdfg.Orientation.Set(wkhtmltopdf.OrientationPortrait)
 	pdfg.PageSize.Set(wkhtmltopdf.PageSizeA4)
 	pdfg.Dpi.Set(300)
@@ -353,4 +392,78 @@ func (ac *ActivityController) ExportPDFActivities(c *gin.Context) {
 		utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+}
+
+func (ac *ActivityController) SendEmailActivities(c *gin.Context) {
+	var activities []models.ActivityModel
+	rows, err := db.DB.Query("select * from activities")
+	if err != nil {
+		if err == sql.ErrNoRows {
+			utils.ThrowErr(c, http.StatusUnauthorized, "Username or Password is wrongd")
+		} else {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	for rows.Next() {
+		var activity models.ActivityModel
+		err = rows.Scan(&activity.Id, &activity.Title, &activity.CreatedAt, &activity.Description, &activity.Status, &activity.Category)
+		if err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		activities = append(activities, activity)
+	}
+	dataTemp := struct {
+		Title       string
+		Description string
+		Activities  []models.ActivityModel
+	}{
+		Title:       "Activity Report",
+		Description: "This is the content of the activity report.",
+		Activities:  activities,
+	}
+	newTempl := template.New("activity_template.html").Funcs(template.FuncMap{
+		"addOne": addOne,
+	})
+	// Load template HTML
+	tmpl, err := newTempl.ParseFiles("template_html/activity_template.html", "template_html/_header_template.html", "template_html/_footer_template.html")
+	if err != nil {
+		utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Render template dengan data ke dalam buffer
+	var htmlBuffer bytes.Buffer
+	if err := tmpl.Execute(&htmlBuffer, dataTemp); err != nil {
+		utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var CONFIG_SMTP_HOST = os.Getenv("SMTP_HOST")
+	CONFIG_SMTP_PORT, err := strconv.Atoi(os.Getenv("SMTP_PORT"))
+	if err != nil {
+		utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var CONFIG_SENDER_NAME = "PT. Testing Sukses Jaya <emailanda@gmail.com>"
+	var CONFIG_AUTH_EMAIL = os.Getenv("SMTP_USER")
+	var CONFIG_AUTH_PASSWORD = os.Getenv("SMTP_PASSWORD")
+	mailer := gomail.NewMessage()
+	mailer.SetHeader("From", CONFIG_SENDER_NAME)
+	mailer.SetHeader("To", os.Getenv("EMAIL_TO"))
+	mailer.SetAddressHeader("Cc", os.Getenv("EMAIL_CC"), "CC")
+	mailer.SetHeader("Subject", "Test mail")
+	mailer.SetBody("text/html", htmlBuffer.String())
+	// mailer.Attach("./pdf/output_activity.pdf")
+	dialer := gomail.NewDialer(
+		CONFIG_SMTP_HOST,
+		CONFIG_SMTP_PORT,
+		CONFIG_AUTH_EMAIL,
+		CONFIG_AUTH_PASSWORD,
+	)
+
+	if err = dialer.DialAndSend(mailer); err != nil {
+		log.Fatal(err.Error())
+	}
+
+	log.Println("Mail sent!")
 }
